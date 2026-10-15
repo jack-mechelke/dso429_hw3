@@ -1,0 +1,55 @@
+name: Practice validation
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'hourly_quiz/**'
+      - 'tests/**'
+      - '.github/workflows/practice.yml'
+  workflow_dispatch:
+  schedule:
+    # UTC. Practice dates only; the CLI also enforces the 2026 end timestamp.
+    # Offset from the top of the hour to reduce scheduler congestion.
+    - cron: '7,22,37,52 * 15-17 10 *'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: practice-validation
+  cancel-in-progress: false
+
+jobs:
+  practice:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - name: Test formulas, validation, and recovery
+        run: python3 -m unittest discover -s tests -v
+      - name: Evaluate every practice round
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+        run: |
+          args=()
+          if [ "$EVENT_NAME" = "schedule" ]; then args+=(--scheduled); fi
+          python3 -m hourly_quiz practice "${args[@]}"
+      - name: Add readable run summary
+        if: always()
+        run: |
+          if [ -f build/practice/summary.md ]; then
+            cat build/practice/summary.md >> "$GITHUB_STEP_SUMMARY"
+          fi
+      - name: Preserve practice evaluation and generated files
+        if: always()
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+        with:
+          name: practice-validation-${{ github.run_id }}-${{ github.run_attempt }}
+          path: build/practice/
+          if-no-files-found: ignore
+          retention-days: 7
+
+# No contents:write, secrets, commits, answer pushes, or graded execution.

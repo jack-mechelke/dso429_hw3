@@ -1,8 +1,17 @@
-# Publish only these reviewed submission files.
+# Explicit public-source allowlist. Private instructions and outputs stay outside Git.
 *
 !/.gitignore
 !/README.md
+!/answer.schema.json
+!/hourly_quiz/
+!/hourly_quiz/*.py
+!/tests/
+!/tests/*.py
+!/.github/
+!/.github/workflows/
+!/.github/workflows/practice.yml
 !/answers/
-/answers/*
 !/answers/.gitkeep
 !/answers/round-[0-9][0-9][0-9][0-9].json
+__pycache__/
+*.pyc
