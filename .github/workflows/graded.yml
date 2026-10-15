@@ -1,0 +1,41 @@
+name: Hourly graded pipeline (activation required)
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '7,22,37,52 * 17-22 10 *'
+
+permissions: {}
+
+concurrency:
+  group: hourly-quiz-submissions
+  cancel-in-progress: false
+
+jobs:
+  submit:
+    # Intentionally hard-disabled until Jack separately authorizes activation.
+    # Activation requires changing this guard, not merely installing the workflow.
+    if: ${{ false }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - name: Test before attempting any submission
+        run: python3 -m unittest discover -s tests -v
+      - name: Reconcile and submit missing released rounds
+        env:
+          ENABLE_GRADED_SUBMISSIONS: ${{ vars.ENABLE_GRADED_SUBMISSIONS }}
+          GITHUB_TOKEN: ${{ github.token }}
+        run: python3 -m hourly_quiz live
+      - name: Save submission receipt evidence and failures
+        if: always()
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+        with:
+          name: submission-status-${{ github.run_id }}-${{ github.run_attempt }}
+          path: build/live/
+          if-no-files-found: ignore
+          retention-days: 30

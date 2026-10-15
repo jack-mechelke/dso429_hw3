@@ -3,7 +3,6 @@
 import hashlib
 import json
 import os
-import shutil
 import tempfile
 import time
 import urllib.error
@@ -75,8 +74,11 @@ def pending_rounds(round_ids, output_dir):
     return pending
 
 
-def generate_round(rid, rows):
-    require_practice([rid])
+def generate_round(rid, rows, allow_graded=False):
+    if not allow_graded:
+        require_practice([rid])
+    elif type(rid) is not int or not 1 <= rid <= 168:
+        raise ValueError("Round ID outside assignment range")
     if len(rows) != 25 or {int(row["q_index"]) for row in rows} != set(range(1, 26)):
         raise ValueError("Incomplete or duplicate round questions")
     answers, solutions = {}, {}

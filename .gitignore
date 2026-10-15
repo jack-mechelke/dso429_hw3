@@ -10,6 +10,7 @@
 !/.github/
 !/.github/workflows/
 !/.github/workflows/practice.yml
+!/.github/workflows/graded.yml
 !/answers/
 !/answers/.gitkeep
 !/answers/round-[0-9][0-9][0-9][0-9].json
