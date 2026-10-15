@@ -2,11 +2,11 @@
 
 import json
 import unittest
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from unittest.mock import patch
 
 from hourly_quiz.pipeline import generate_round
-from hourly_quiz.submission import GRADED_STOP, GitHubStore, RemoteError, RetryableConflict, Snapshot, run_live
+from hourly_quiz.submission import GRADED_STOP, PRACTICE_SIM_START, PRACTICE_STOP, GitHubStore, RemoteError, RetryableConflict, Snapshot, run_live, run_practice_submission
 from hourly_quiz.__main__ import main
 from test_pipeline import answer_payload, fixture
 
@@ -146,6 +146,54 @@ class SubmissionTests(unittest.TestCase):
     def test_publisher_refuses_unrelated_paths(self):
         store = GitHubStore("synthetic-test-token", "jack-mechelke/dso429_hw3")
         with self.assertRaises(ValueError):store.publish(Snapshot("head", "tree", {}), {"private.txt": "secret"})
+
+
+class HourlyPracticeTests(unittest.TestCase):
+    def run_at(self, now, store=None, rounds=range(1, 50)):
+        store = store or FakeStore()
+        store.clock = lambda: now
+        report = run_practice_submission(fixture(rounds), store, now=now, authorized=True)
+        return report, store
+
+    def test_first_run_publishes_only_first_eligible_practice_round(self):
+        report, store = self.run_at(PRACTICE_SIM_START + timedelta(minutes=30))
+        self.assertEqual(report["mode"], "practice_simulation")
+        self.assertEqual(report["submitted"], [1])
+        self.assertEqual(set(store.files), {"answers/round-0001.json"})
+        self.assertNotEqual(report["eligible_at_utc"]["1"], report["source_released_at_utc"]["1"])
+
+    def test_next_hour_discovers_next_round_and_skips_previous(self):
+        _, store = self.run_at(PRACTICE_SIM_START + timedelta(minutes=30))
+        report, _ = self.run_at(PRACTICE_SIM_START + timedelta(hours=1), store)
+        self.assertEqual(report["submitted"], [2])
+        self.assertEqual(report["already_present"], [1])
+        self.assertEqual(len(store.published), 2)
+
+    def test_repeat_in_same_hour_creates_no_duplicate_commit(self):
+        now = PRACTICE_SIM_START + timedelta(minutes=30)
+        _, store = self.run_at(now)
+        report, _ = self.run_at(now + timedelta(minutes=1), store)
+        self.assertEqual(report["submitted"], [])
+        self.assertEqual(len(store.published), 1)
+
+    def test_delayed_start_catches_all_eligible_backlog(self):
+        report, store = self.run_at(PRACTICE_SIM_START + timedelta(hours=4))
+        self.assertEqual(report["submitted"], [1, 2, 3, 4, 5])
+        self.assertEqual(len(store.published), 1)
+
+    def test_never_selects_or_solves_a_graded_round(self):
+        report, store = self.run_at(PRACTICE_STOP - timedelta(seconds=1))
+        self.assertEqual(report["submitted"], list(range(1, 49)))
+        self.assertNotIn(49, report["rounds_seen"])
+        self.assertFalse(any(int(path[14:18]) > 48 for path in store.files))
+
+    def test_practice_window_stops_before_graded_phase(self):
+        report = run_practice_submission(fixture(), None, now=PRACTICE_STOP, authorized=True)
+        self.assertEqual(report["status"], "outside_execution_window")
+
+    def test_practice_submission_requires_authorized_call(self):
+        with self.assertRaises(ValueError):
+            run_practice_submission(fixture(), None, now=PRACTICE_SIM_START)
 
 
 if __name__ == "__main__":unittest.main()

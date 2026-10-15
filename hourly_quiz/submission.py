@@ -9,7 +9,7 @@ import json
 import urllib.error
 import urllib.request
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from .pipeline import generate_round
 from .validation import read_questions, utc_timestamp, validate_answer
@@ -20,6 +20,10 @@ GRADED_START = datetime(2026, 10, 17, 21, tzinfo=timezone.utc)
 # Conservative handout-cover cutoff. The final-deadline discrepancy remains
 # unresolved; do not silently extend this to the later Brightspace cutoff.
 GRADED_STOP = datetime(2026, 10, 22, 21, tzinfo=timezone.utc)
+# All practice rows share one upstream release time. This deliberately labeled
+# simulation exposes one more real practice round each hour for end-to-end tests.
+PRACTICE_SIM_START = datetime(2026, 10, 15, 20, tzinfo=timezone.utc)
+PRACTICE_STOP = GRADED_START
 
 
 class RemoteError(RuntimeError):
@@ -110,17 +114,30 @@ class GitHubStore:
 
 
 def run_live(questions, store, now=None, authorized=False, attempts=3):
+    return _run_submission(questions, store, now, authorized, attempts, mode="graded")
+
+
+def run_practice_submission(questions, store, now=None, authorized=False, attempts=3):
+    return _run_submission(questions, store, now, authorized, attempts, mode="practice_simulation")
+
+
+def _run_submission(questions, store, now, authorized, attempts, mode):
     if not authorized:
-        raise ValueError("Graded execution is disabled; explicit activation is required")
+        raise ValueError("Submission execution is disabled; explicit activation is required")
+    practice = mode == "practice_simulation"
+    first, last = (1, 48) if practice else (49, 168)
+    start, stop = (PRACTICE_SIM_START, PRACTICE_STOP) if practice else (GRADED_START, GRADED_STOP)
     now = now or datetime.now(timezone.utc)
     if now.tzinfo is None:
         raise ValueError("UTC-aware runtime clock required")
-    if not GRADED_START <= now < GRADED_STOP:
-        return {"mode": "graded", "status": "outside_execution_window", "submitted": [], "failed": {}}
+    if not start <= now < stop:
+        return {"mode": mode, "status": "outside_execution_window", "submitted": [], "failed": {}}
     grouped, errors = read_questions(questions)
-    target = sorted(r for r in grouped if 49 <= r <= 168)
-    base = {"mode": "graded", "checked_at_utc": now.isoformat(), "submitted": [], "already_present": [],
+    target = sorted(r for r in grouped if first <= r <= last)
+    base = {"mode": mode, "checked_at_utc": now.isoformat(), "submitted": [], "already_present": [],
             "failed": {}, "future_rounds_skipped": [], "rounds_seen": target, "receipts": [],
+            "source_released_at_utc": {}, "eligible_at_utc": {},
+            "release_policy": "simulated: October 15 20:00 UTC + (round_id - 1) hours" if practice else "actual source released_at",
             "receipt_note": "Remote read-back proves contents exist on main. GitHub HTTP Date bounds response time; commit timestamps are never treated as push receipt time. Official timing is determined by the instructor's GitHub push records."}
     last_conflict = None
     acknowledged = {}
@@ -135,7 +152,10 @@ def run_live(questions, store, now=None, authorized=False, attempts=3):
                     continue
                 rows = grouped[rid]
                 released = utc_timestamp(rows[0]["released_at"])
-                if released > now:
+                eligible = PRACTICE_SIM_START + timedelta(hours=rid - 1) if practice else released
+                base["source_released_at_utc"][key] = released.isoformat()
+                base["eligible_at_utc"][key] = eligible.isoformat()
+                if eligible > now:
                     if rid not in base["future_rounds_skipped"]:base["future_rounds_skipped"].append(rid)
                     continue
                 path = "answers/round-%04d.json" % rid
@@ -149,7 +169,7 @@ def run_live(questions, store, now=None, authorized=False, attempts=3):
                     except ValueError:
                         pass
                 try:
-                    encoded, _ = generate_round(rid, rows, allow_graded=True)
+                    encoded, _ = generate_round(rid, rows, allow_graded=not practice)
                     files[path] = encoded
                 except ValueError as exc:
                     base["failed"][key] = str(exc)
@@ -160,7 +180,7 @@ def run_live(questions, store, now=None, authorized=False, attempts=3):
             # Recheck the actual clock before mutation in real runs. Synthetic
             # tests supply now explicitly via their fake store clock.
             clock = getattr(store, "clock", lambda: datetime.now(timezone.utc))()
-            if not GRADED_START <= clock < GRADED_STOP:
+            if not start <= clock < stop:
                 raise RemoteError("Submission window closed before publish")
             receipt = store.publish(snapshot, files)
             verified = store.snapshot()

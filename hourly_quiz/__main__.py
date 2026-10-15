@@ -6,7 +6,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from .pipeline import PRACTICE_END, atomic_write, download, evaluate
-from .submission import GitHubStore, RemoteError, run_live
+from .submission import GitHubStore, RemoteError, run_live, run_practice_submission
 from .validation import validate_answer
 
 
@@ -21,8 +21,26 @@ def main():
     validate = commands.add_parser("validate", help="Strictly validate an answer file without submitting")
     validate.add_argument("path", type=Path)
     commands.add_parser("live", help="Dormant graded runtime; requires explicit activation and ephemeral runner token")
+    commands.add_parser("practice-submit", help="Submit only practice rounds using the labeled hourly simulation")
     args = parser.parse_args()
     try:
+        if args.command == "practice-submit":
+            store = GitHubStore(os.environ.get("GITHUB_TOKEN"), os.environ.get("GITHUB_REPOSITORY"))
+            questions = download("questions.csv", Path(".cache/quiz"))
+            report = run_practice_submission(questions, store, authorized=True)
+            atomic_write(Path("build/practice-submit/status.json"), json.dumps(report, indent=2) + "\n")
+            summary = ("# Hourly practice submission test\n\n"
+                       "**Practice release simulation; no graded execution.**\n\n"
+                       "- Checked (UTC): %s\n- Result: %s\n- Published and verified rounds: %s\n"
+                       "- Already present: %s\n- Failed rounds: %s\n\n"
+                       "One additional practice round becomes eligible each hour, starting October 15 at 1 PM Pacific. "
+                       "The instructor published all practice questions ahead of time; this eligibility schedule is simulated. "
+                       "Questions, calculations, JSON files, GitHub publication and remote verification are real.\n") % (
+                           report.get("checked_at_utc", "outside test window"), report["status"],
+                           report["submitted"], report.get("already_present", []), report["failed"])
+            atomic_write(Path("build/practice-submit/summary.md"), summary)
+            print(json.dumps(report, indent=2))
+            return 1 if report["failed"] else 0
         if args.command == "live":
             if os.environ.get("ENABLE_GRADED_SUBMISSIONS") != "true":
                 raise ValueError("Graded execution disabled: explicit activation required")
@@ -51,8 +69,9 @@ def main():
                           "failed_rounds": report["failures"], "mismatches": report["mismatches"]}, indent=2))
         return 0 if report["passed"] else 1
     except (ValueError, OSError, RemoteError) as exc:
-        if args.command == "live":
-            atomic_write(Path("build/live/status.json"), json.dumps({"status": "error", "error": str(exc)}) + "\n")
+        if args.command in {"live", "practice-submit"}:
+            directory = "live" if args.command == "live" else "practice-submit"
+            atomic_write(Path("build") / directory / "status.json", json.dumps({"status": "error", "error": str(exc)}) + "\n")
         print("Pipeline failed: " + str(exc), file=sys.stderr)
         return 1
 

@@ -1,0 +1,51 @@
+name: Hourly practice submission test
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/practice_submit.yml'
+  workflow_dispatch:
+  schedule:
+    # UTC minute 00 equals minute 00 in Pacific. Best-effort GitHub scheduling.
+    - cron: '0 * 15-17 10 *'
+
+permissions: {}
+
+concurrency:
+  group: hourly-quiz-submissions
+  cancel-in-progress: false
+
+jobs:
+  practice-submit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - name: Test detection and submission safeguards
+        run: python3 -m unittest discover -s tests -v
+      - name: Find, solve, publish and verify due practice rounds
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: python3 -m hourly_quiz practice-submit
+      - name: Add readable test summary
+        if: always()
+        run: |
+          if [ -f build/practice-submit/summary.md ]; then
+            cat build/practice-submit/summary.md >> "$GITHUB_STEP_SUMMARY"
+          fi
+      - name: Preserve publication and verification evidence
+        if: always()
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+        with:
+          name: practice-submission-${{ github.run_id }}-${{ github.run_attempt }}
+          path: build/practice-submit/
+          if-no-files-found: ignore
+          retention-days: 7
+
+# The command enforces rounds 1–48 and stops at October 17, 2026, 21:00 UTC.
+# No graded flag or model/API credential is configured.
