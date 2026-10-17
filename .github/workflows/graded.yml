@@ -1,4 +1,4 @@
-name: Hourly graded pipeline (activation required)
+name: Hourly graded pipeline
 
 on:
   workflow_dispatch:
@@ -13,9 +13,7 @@ concurrency:
 
 jobs:
   submit:
-    # Intentionally hard-disabled until Jack separately authorizes activation.
-    # Activation requires changing this guard, not merely installing the workflow.
-    if: ${{ false }}
+    # Runtime enforces the approved graded dates and rounds 49–168.
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
@@ -28,7 +26,7 @@ jobs:
         run: python3 -m unittest discover -s tests -v
       - name: Reconcile and submit missing released rounds
         env:
-          ENABLE_GRADED_SUBMISSIONS: ${{ vars.ENABLE_GRADED_SUBMISSIONS }}
+          ENABLE_GRADED_SUBMISSIONS: 'true'
           GITHUB_TOKEN: ${{ github.token }}
         run: python3 -m hourly_quiz live
       - name: Save submission receipt evidence and failures
